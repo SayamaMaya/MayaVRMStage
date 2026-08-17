@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VRM/VRMA Dance Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #060810; color: white; font-family: 'Inter', sans-serif; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+        
+        #ui-layer { position: absolute; top: 1rem; right: 1rem; width: auto; height: auto; max-height: calc(100vh - 2rem); z-index: 10; display: flex; flex-direction: column; align-items: flex-end; transition: opacity 0.3s ease, transform 0.3s ease; }
+        #ui-layer.hidden { opacity: 0; pointer-events: none; transform: translateY(-10px); }
+        
+        .controls-panel { pointer-events: auto; background: linear-gradient(145deg, rgba(15, 23, 42, 0.92), rgba(30, 41, 59, 0.88)); backdrop-filter: blur(16px); padding: 1rem 1.25rem; border-radius: 1.25rem; box-shadow: 0 20px 40px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.2); display: flex; flex-direction: column; gap: 0.75rem; width: 360px; max-width: calc(100vw - 2rem); border: 1px solid rgba(255,255,255,0.15); max-height: calc(100vh - 5rem); overflow-y: auto; }
+        .controls-panel::-webkit-scrollbar { width: 6px; }
+        .controls-panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 3px; }
+        
+        .button-group { display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; }
+        
+        .file-input-wrapper { position: relative; overflow: hidden; display: inline-block; flex: 1; min-width: 140px; cursor: pointer; }
+        .file-input-wrapper input[type=file] { font-size: 100px; position: absolute; left: 0; top: 0; opacity: 0; cursor: pointer; height: 100%; width: 100%; z-index: 50; }
+        .btn { display: inline-block; width: 100%; padding: 0.55rem 0.75rem; border-radius: 0.75rem; font-weight: 600; font-size: 0.8rem; text-align: center; cursor: pointer; transition: all 0.2s ease; border: none; box-shadow: 0 4px 12px rgba(0,0,0,0.2); position: relative; z-index: 10; pointer-events: none; }
+        .btn-primary { background: linear-gradient(135deg, #ec4899, #8b5cf6); color: white; }
+        .btn-secondary { background: linear-gradient(135deg, #06b6d4, #3b82f6); color: white; }
+        
+        .color-settings { display: flex; gap: 1.5rem; justify-content: center; align-items: center; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 0.5rem; margin-top: 0.25rem; }
+        .color-picker-group { display: flex; flex-direction: row; align-items: center; gap: 0.5rem; font-size: 0.75rem; color: #cbd5e1; }
+        input[type="color"] { -webkit-appearance: none; border: none; width: 1.75rem; height: 1.75rem; border-radius: 50%; cursor: pointer; background: transparent; padding: 0; }
+        input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+        input[type="color"]::-webkit-color-swatch { border: 2px solid rgba(255,255,255,0.3); border-radius: 50%; box-shadow: 0 2px 6px rgba(0,0,0,0.3); }
+        
+        .props-panel-section { border-top: 1px solid rgba(255,255,255,0.1); padding-top: 0.5rem; margin-top: 0.25rem; display: flex; flex-direction: column; gap: 0.4rem; }
+        .prop-item { background: rgba(30, 41, 59, 0.75); padding: 0.6rem; border-radius: 0.75rem; display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.75rem; border: 1px solid rgba(255,255,255,0.08); }
+        .prop-row { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+        .slider-group { display: flex; align-items: center; gap: 0.25rem; flex: 1; }
+        .slider-group label { font-size: 0.7rem; color: #94a3b8; width: 35px; }
+        .slider-group input[type="range"] { width: 100%; accent-color: #ec4899; height: 4px; }
+
+        #toggle-ui-btn { position: absolute; top: 1rem; right: 1rem; z-index: 20; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.25); color: white; width: 2.75rem; height: 2.75rem; border-radius: 50%; display: flex; justify-content: center; align-items: center; cursor: pointer; font-size: 1.1rem; box-shadow: 0 6px 16px rgba(0,0,0,0.4); transition: all 0.2s ease; }
+        #toggle-ui-btn:hover { background: rgba(30, 41, 59, 0.95); transform: scale(1.08); }
+
+        .info-text { margin-top: 0.25rem; font-size: 0.75rem; color: #cbd5e1; text-align: center; width: 100%; }
+        #loading-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.75); backdrop-filter: blur(8px); z-index: 20; display: flex; justify-content: center; align-items: center; flex-direction: column; opacity: 0; pointer-events: none; transition: opacity 0.3s ease; }
+        #loading-overlay.active { opacity: 1; pointer-events: auto; }
+        .loader { border: 4px solid rgba(255,255,255,0.1); border-left-color: #ec4899; border-radius: 50%; width: 42px; height: 42px; animation: spin 1s linear infinite; margin-bottom: 1rem; box-shadow: 0 0 15px rgba(236,72,153,0.4); }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #message-banner { position: absolute; top: 1.5rem; left: 50%; transform: translateX(-50%); z-index: 30; background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.25); padding: 0.75rem 1.5rem; border-radius: 0.85rem; box-shadow: 0 8px 24px rgba(0,0,0,0.5); display: none; text-align: center; font-size: 0.9rem; max-width: 90%; }
+        #message-banner.error { border-color: rgba(239, 68, 68, 0.6); background: rgba(127, 29, 29, 0.9); }
+        #message-banner.success { border-color: rgba(16, 185, 129, 0.6); background: rgba(6, 78, 59, 0.9); }
+    </style>
+
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/",
+        "@pixiv/three-vrm": "https://unpkg.com/@pixiv/three-vrm@3.2.0/lib/three-vrm.module.js",
+        "@pixiv/three-vrm-animation": "https://unpkg.com/@pixiv/three-vrm-animation@3.2.0/lib/three-vrm-animation.module.js"
+      }
+    }
+    </script>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+
+    <div id="loading-overlay">
+        <div class="loader"></div>
+        <p id="loading-text">Loading...</p>
+    </div>
+
+    <div id="message-banner"></div>
+
+    <button id="toggle-ui-btn" title="Toggle Menu">⚙️</button>
+
+    <div id="ui-layer">
+        <div class="controls-panel">
+            <div class="w-full text-center font-bold text-sm border-b border-gray-700/80 pb-2 flex justify-between items-center">
+                <span class="bg-gradient-to-r from-pink-400 to-cyan-400 bg-clip-text text-transparent">VRM / VRMA Viewer</span>
+                <button id="close-menu-btn" class="text-xs text-gray-400 hover:text-white px-1.5 py-0.5 bg-gray-800 rounded cursor-pointer">✕</button>
+            </div>
+            
+            <div class="button-group">
+                <div class="file-input-wrapper">
+                    <button class="btn btn-primary" id="vrm-btn-text">1. Model</button>
+                    <input type="file" id="vrm-input" />
+                </div>
+                
+                <div class="file-input-wrapper" id="vrma-wrapper" style="opacity: 0.5;">
+                    <button class="btn btn-secondary" id="vrma-btn-text">2. Motion</button>
+                    <input type="file" id="vrma-input" disabled />
+                </div>
+            </div>
+
+            <button id="sync-play-btn" class="btn btn-secondary text-xs py-2 w-full font-bold shadow-md hover:brightness-110" style="pointer-events: auto;">▶ 0秒から同時再生 (Sync Play)</button>
+
+            <!-- Model Size Settings Section -->
+            <div class="props-panel-section">
+                <div class="text-xs font-semibold text-gray-300 flex justify-between items-center">
+                    <span>Model Size (モデルの大きさ)</span>
+                    <span id="model-scale-label" class="text-gray-400">1.0x</span>
+                </div>
+                <div class="prop-row mt-1">
+                    <div class="slider-group"><label style="width:45px;">Size</label><input type="range" id="model-scale-slider" min="0.3" max="3.0" step="0.05" value="1.0"></div>
+                </div>
+            </div>
+
+            <!-- Glow / Neon Settings Section -->
+            <div class="props-panel-section">
+                <div class="text-xs font-semibold text-gray-300 flex justify-between items-center">
+                    <span>Stage Glow & Neon (ネオン発光演出)</span>
+                    <span id="glow-intensity-label" class="text-gray-400">1.0x</span>
+                </div>
+                <div class="prop-row mt-1">
+                    <div class="slider-group"><label style="width:45px;">Glow</label><input type="range" id="glow-intensity-slider" min="0.2" max="3.0" step="0.1" value="1.0"></div>
+                </div>
+            </div>
+            
+            <div class="color-settings">
+                <div class="color-picker-group">
+                    <label for="theme-color-1">Theme 1</label>
+                    <input type="color" id="theme-color-1" value="#ff00aa">
+                </div>
+                <div class="color-picker-group">
+                    <label for="theme-color-2">Theme 2</label>
+                    <input type="color" id="theme-color-2" value="#00eaff">
+                </div>
+            </div>
+
+            <div class="props-panel-section">
+                <div class="text-xs font-semibold text-gray-300 flex justify-between items-center">
+                    <span>Lighting (明るさ調整)</span>
+                </div>
+                <div class="prop-row mt-1">
+                    <div class="slider-group"><label style="width:40px;">Main</label><input type="range" id="light-main-slider" min="0" max="3" step="0.1" value="0.6"></div>
+                    <div class="slider-group"><label style="width:45px;">Ambient</label><input type="range" id="light-ambient-slider" min="0" max="2" step="0.1" value="0.4"></div>
+                </div>
+            </div>
+
+            <div class="props-panel-section">
+                <div class="text-xs font-semibold text-gray-300 flex justify-between items-center">
+                    <span>Camera Distance</span>
+                    <span id="cam-dist-label" class="text-gray-400">5.0m</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <input type="range" id="cam-distance-slider" min="1.0" max="15.0" step="0.2" value="5.0" class="w-full accent-pink-500 h-1">
+                </div>
+                <div class="flex gap-1.5 mt-1 justify-center">
+                    <button class="btn btn-secondary text-xs py-1 px-1 flex-1" id="cam-preset-close" style="pointer-events: auto;">アップ</button>
+                    <button class="btn btn-secondary text-xs py-1 px-1 flex-1" id="cam-preset-mid" style="pointer-events: auto;">全身</button>
+                    <button class="btn btn-secondary text-xs py-1 px-1 flex-1" id="cam-preset-far" style="pointer-events: auto;">引き</button>
+                </div>
+            </div>
+
+            <!-- Image & Video Props with Chroma Key Section -->
+            <div class="props-panel-section">
+                <div class="text-xs font-semibold text-gray-300 flex justify-between items-center">
+                    <span>Image / Video Props (Max 4)</span>
+                    <span id="prop-count-label" class="text-gray-400">0 / 4</span>
+                </div>
+                <div id="prop-slots-container" class="flex flex-col gap-1.5 max-h-48 overflow-y-auto pr-1"></div>
+                <div class="file-input-wrapper w-full mt-1">
+                    <button class="btn btn-secondary w-full text-xs py-1.5" style="pointer-events: auto;">+ Add Image or Video Prop</button>
+                    <input type="file" id="prop-file-input" accept="image/*,video/*" />
+                </div>
+            </div>
+            
+            <div class="info-text">
+                <p id="status-text" class="truncate">Load a VRM model first.</p>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
+        import { VRMAnimationLoaderPlugin, createVRMAnimationClip, VRMLookAtQuaternionProxy } from '@pixiv/three-vrm-animation';
+
+        let scene, camera, renderer, controls;
+        let currentVrm = null;
+        let currentMixer = null;
+        let clock = new THREE.Clock();
+        
+        let mainLight, ambientLight;
+        
+        let themeColor1 = '#ff00aa';
+        let themeColor2 = '#00eaff';
+        let stageElements = {
+            mats1: [], mats2: [],
+            lights1: [], lights2: [],
+            audienceSticks: [],
+            particles: null,
+            particleVelocities: [],
+            strobeLights: []
+        };
+        
+        let imageProps = [];
+        const MAX_PROPS = 4;
+        
+        let baseModelScale = 1.0;
+        let baseGlowIntensity = 1.0;
+        
+        const vrmInput = document.getElementById('vrm-input');
+        const vrmaInput = document.getElementById('vrma-input');
+        const vrmaWrapper = document.getElementById('vrma-wrapper');
+        const syncPlayBtn = document.getElementById('sync-play-btn');
+        const propFileInput = document.getElementById('prop-file-input');
+        const statusText = document.getElementById('status-text');
+        const vrmBtnText = document.getElementById('vrm-btn-text');
+        const vrmaBtnText = document.getElementById('vrma-btn-text');
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const loadingText = document.getElementById('loading-text');
+        const messageBanner = document.getElementById('message-banner');
+        const uiLayer = document.getElementById('ui-layer');
+        const toggleUiBtn = document.getElementById('toggle-ui-btn');
+        const closeMenuBtn = document.getElementById('close-menu-btn');
+        const color1Input = document.getElementById('theme-color-1');
+        const color2Input = document.getElementById('theme-color-2');
+        const lightMainSlider = document.getElementById('light-main-slider');
+        const lightAmbientSlider = document.getElementById('light-ambient-slider');
+        const camDistanceSlider = document.getElementById('cam-distance-slider');
+        const camDistLabel = document.getElementById('cam-dist-label');
+        const propSlotsContainer = document.getElementById('prop-slots-container');
+        const propCountLabel = document.getElementById('prop-count-label');
+        const modelScaleSlider = document.getElementById('model-scale-slider');
+        const modelScaleLabel = document.getElementById('model-scale-label');
+        const glowIntensitySlider = document.getElementById('glow-intensity-slider');
+        const glowIntensityLabel = document.getElementById('glow-intensity-label');
+
+        const propShader = {
+            uniforms: {
+                map: { value: null },
+                keyColor: { value: new THREE.Color(0x00ff00) },
+                threshold: { value: 0.35 },
+                smoothing: { value: 0.1 },
+                useChromaKey: { value: 0.0 },
+                saturation: { value: 1.0 },
+                brightness: { value: 1.0 }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform sampler2D map;
+                uniform vec3 keyColor;
+                uniform float threshold;
+                uniform float smoothing;
+                uniform float useChromaKey;
+                uniform float saturation;
+                uniform float brightness;
+                varying vec2 vUv;
+                void main() {
+                    vec4 texColor = texture2D(map, vUv);
+                    float alpha = texColor.a;
+                    if (useChromaKey > 0.5) {
+                        float dist = distance(texColor.rgb, keyColor);
+                        alpha *= smoothstep(threshold, threshold + smoothing, dist);
+                        if (alpha < 0.05) discard;
+                    }
+                    vec3 color = texColor.rgb;
+                    // Saturation
+                    float gray = dot(color, vec3(0.2126, 0.7152, 0.0722));
+                    color = mix(vec3(gray), color, saturation);
+                    // Brightness
+                    color = color * brightness;
+                    gl_FragColor = vec4(color, alpha);
+                }
+            `
+        };
+
+        function showMessage(text, isError = false) {
+            messageBanner.innerText = text;
+            messageBanner.className = isError ? 'error' : 'success';
+            messageBanner.style.display = 'block';
+            setTimeout(() => {
+                messageBanner.style.display = 'none';
+            }, 5000);
+        }
+
+        function showLoading(text) {
+            loadingText.innerText = text;
+            loadingOverlay.classList.add('active');
+        }
+
+        function hideLoading() {
+            loadingOverlay.classList.remove('active');
+        }
+
+        function init() {
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.outputColorSpace = THREE.SRGBColorSpace; 
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.2;
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x060810);
+            scene.fog = new THREE.FogExp2(0x060810, 0.015);
+
+            camera = new THREE.PerspectiveCamera(30.0, window.innerWidth / window.innerHeight, 0.1, 100.0);
+            camera.position.set(0.0, 1.5, 6.0);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.screenSpacePanning = true;
+            controls.target.set(0.0, 1.0, 0.0);
+            controls.maxPolarAngle = Math.PI / 2 + 0.1;
+            controls.update();
+
+            mainLight = new THREE.DirectionalLight(0xffffff, parseFloat(lightMainSlider.value));
+            mainLight.position.set(1.0, 5.0, 4.0).normalize();
+            scene.add(mainLight);
+            
+            ambientLight = new THREE.AmbientLight(0xffffff, parseFloat(lightAmbientSlider.value));
+            scene.add(ambientLight);
+            
+            buildLiveStage();
+
+            window.addEventListener('resize', onWindowResize);
+            vrmInput.addEventListener('change', handleVRMLoad);
+            vrmaInput.addEventListener('change', handleVRMALoad);
+            syncPlayBtn.addEventListener('click', syncPlayFromStart);
+            propFileInput.addEventListener('change', handlePropFileLoad);
+            
+            color1Input.addEventListener('input', updateThemeColors);
+            color2Input.addEventListener('input', updateThemeColors);
+            
+            lightMainSlider.addEventListener('input', (e) => {
+                if (mainLight) mainLight.intensity = parseFloat(e.target.value);
+            });
+            lightAmbientSlider.addEventListener('input', (e) => {
+                if (ambientLight) ambientLight.intensity = parseFloat(e.target.value);
+            });
+            
+            camDistanceSlider.addEventListener('input', (e) => {
+                setCameraDistance(parseFloat(e.target.value));
+            });
+
+            modelScaleSlider.addEventListener('input', (e) => {
+                baseModelScale = parseFloat(e.target.value);
+                modelScaleLabel.innerText = baseModelScale.toFixed(2) + 'x';
+                if (currentVrm) {
+                    currentVrm.scene.scale.set(baseModelScale, baseModelScale, baseModelScale);
+                }
+            });
+
+            glowIntensitySlider.addEventListener('input', (e) => {
+                baseGlowIntensity = parseFloat(e.target.value);
+                glowIntensityLabel.innerText = baseGlowIntensity.toFixed(1) + 'x';
+                updateThemeColors();
+            });
+
+            document.getElementById('cam-preset-close').addEventListener('click', () => {
+                camDistanceSlider.value = 2.0;
+                setCameraDistance(2.0);
+            });
+            document.getElementById('cam-preset-mid').addEventListener('click', () => {
+                camDistanceSlider.value = 5.0;
+                setCameraDistance(5.0);
+            });
+            document.getElementById('cam-preset-far').addEventListener('click', () => {
+                camDistanceSlider.value = 9.0;
+                setCameraDistance(9.0);
+            });
+
+            toggleUiBtn.addEventListener('click', toggleUI);
+            closeMenuBtn.addEventListener('click', toggleUI);
+            document.getElementById('canvas-container').addEventListener('touchstart', handleTouchStart, { passive: false });
+
+            window.addEventListener('dragover', (e) => e.preventDefault());
+            window.addEventListener('drop', handleFileDrop);
+
+            renderPropSlotsUI();
+            animate();
+            updateStatus();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        
+        function buildLiveStage() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 1024; canvas.height = 1024;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#101424'; ctx.fillRect(0,0,1024,1024);
+            ctx.fillStyle = '#1b2238'; ctx.fillRect(0,0,512,512); ctx.fillRect(512,512,512,512);
+            
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+            ctx.lineWidth = 4;
+            for(let i=0; i<=1024; i+=64) {
+                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 1024); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(1024, i); ctx.stroke();
+            }
+
+            const checkerTex = new THREE.CanvasTexture(canvas);
+            checkerTex.wrapS = checkerTex.wrapT = THREE.RepeatWrapping;
+            checkerTex.repeat.set(16, 8);
+            
+            const floorMat = new THREE.MeshStandardMaterial({ map: checkerTex, roughness: 0.15, metalness: 0.8 });
+            const floorGeo = new THREE.PlaneGeometry(60, 30);
+            const floor = new THREE.Mesh(floorGeo, floorMat);
+            floor.rotation.x = -Math.PI / 2;
+            floor.position.y = -0.05;
+            floor.position.z = -10;
+            scene.add(floor);
+
+            const arenaMat = new THREE.MeshStandardMaterial({ color: 0x04060a, roughness: 0.9 });
+            const stageFrontGeo = new THREE.PlaneGeometry(60, 1.5);
+            const stageFront = new THREE.Mesh(stageFrontGeo, arenaMat);
+            stageFront.position.y = -0.8;
+            stageFront.position.z = 5;
+            scene.add(stageFront);
+
+            const arenaGeo = new THREE.PlaneGeometry(60, 30);
+            const arena = new THREE.Mesh(arenaGeo, arenaMat);
+            arena.rotation.x = -Math.PI / 2;
+            arena.position.y = -1.55;
+            arena.position.z = 20;
+            scene.add(arena);
+
+            const centerGeo = new THREE.CylinderGeometry(2.6, 2.8, 0.08, 64);
+            const centerMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x222244, roughness: 0.1, metalness: 0.8 });
+            const centerStage = new THREE.Mesh(centerGeo, centerMat);
+            centerStage.position.y = -0.02;
+            scene.add(centerStage);
+
+            const screenMat = new THREE.MeshBasicMaterial({ color: 0x111622 });
+            const mainScreenGeo = new THREE.PlaneGeometry(11, 5.5);
+            const mainScreen = new THREE.Mesh(mainScreenGeo, screenMat);
+            mainScreen.position.set(0, 4.2, -8.1);
+            scene.add(mainScreen);
+
+            const frameMat = new THREE.MeshStandardMaterial({ color: 0x3b82f6, emissive: 0x3b82f6, emissiveIntensity: 1.2 });
+            stageElements.mats1.push(frameMat);
+            const frameGeo = new THREE.RingGeometry(2.0, 2.1, 32);
+            const ring = new THREE.Mesh(frameGeo, frameMat);
+            ring.position.set(0, 4.2, -8.0);
+            scene.add(ring);
+
+            const createLightPillar = (x, z) => {
+                const pillarMat = new THREE.MeshStandardMaterial({ color: 0x111827, metalness: 0.9, roughness: 0.1 });
+                const pillarGeo = new THREE.CylinderGeometry(0.4, 0.4, 9, 16);
+                const pillar = new THREE.Mesh(pillarGeo, pillarMat);
+                pillar.position.set(x, 4.5, z);
+                scene.add(pillar);
+
+                for(let i=0; i<4; i++) {
+                    const orbGeo = new THREE.SphereGeometry(0.55, 16, 16);
+                    const isTheme1 = (i % 2 === 0);
+                    const orbMat = new THREE.MeshStandardMaterial({ color: isTheme1 ? themeColor1 : themeColor2, emissive: isTheme1 ? themeColor1 : themeColor2, emissiveIntensity: 1.5 });
+                    const orb = new THREE.Mesh(orbGeo, orbMat);
+                    orb.position.set(x, 1.8 + (i * 1.8), z + 0.3);
+                    scene.add(orb);
+                    
+                    if (isTheme1) stageElements.mats1.push(orbMat);
+                    else stageElements.mats2.push(orbMat);
+                }
+            };
+            createLightPillar(-5, -6);
+            createLightPillar(5, -6);
+
+            const createSpotlight = (x, colorHex, isTheme1) => {
+                const spotLight = new THREE.SpotLight(colorHex, 5, 25, Math.PI / 5, 0.4, 1);
+                spotLight.position.set(x, 11, -5);
+                spotLight.target.position.set(x * 0.4, 0, 0);
+                scene.add(spotLight);
+                scene.add(spotLight.target);
+                
+                if (isTheme1) stageElements.lights1.push(spotLight);
+                else stageElements.lights2.push(spotLight);
+            };
+            createSpotlight(-3.5, themeColor1, true);
+            createSpotlight(3.5, themeColor2, false);
+
+            const strobeLight = new THREE.PointLight(0xffffff, 0, 15);
+            strobeLight.position.set(0, 8, 0);
+            scene.add(strobeLight);
+            stageElements.strobeLights.push(strobeLight);
+
+            const stickGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.45, 8);
+            for(let i=0; i<200; i++) {
+                const isTheme1 = Math.random() > 0.5;
+                const stickMat = new THREE.MeshStandardMaterial({ color: isTheme1 ? themeColor1 : themeColor2, emissive: isTheme1 ? themeColor1 : themeColor2, emissiveIntensity: 1.0 });
+                const stick = new THREE.Mesh(stickGeo, stickMat);
+                
+                const x = (Math.random() - 0.5) * 40;
+                const z = 5.5 + Math.random() * 20;
+                const y = -1.55 + 0.8 + Math.random() * 1.0;
+
+                stick.position.set(x, y, z);
+                stick.rotation.x = -Math.PI / 6 + (Math.random() - 0.5) * 0.5;
+                
+                scene.add(stick);
+                stageElements.audienceSticks.push({ mesh: stick, speed: 1.5 + Math.random() * 2.5, offset: Math.random() * Math.PI * 2 });
+                
+                if (isTheme1) stageElements.mats1.push(stickMat);
+                else stageElements.mats2.push(stickMat);
+            }
+
+            const particleCount = 400;
+            const particleGeo = new THREE.BufferGeometry();
+            const particlePos = new Float32Array(particleCount * 3);
+            for(let i=0; i<particleCount; i++) {
+                particlePos[i*3] = (Math.random() - 0.5) * 22;
+                particlePos[i*3+1] = Math.random() * 10;
+                particlePos[i*3+2] = (Math.random() - 0.5) * 16 - 2;
+                
+                stageElements.particleVelocities.push({
+                    x: (Math.random() - 0.5) * 0.02,
+                    y: -Math.random() * 0.03 - 0.01,
+                    z: (Math.random() - 0.5) * 0.02
+                });
+            }
+            particleGeo.setAttribute('position', new THREE.BufferAttribute(particlePos, 3));
+            
+            const pCanvas = document.createElement('canvas');
+            pCanvas.width = 64; pCanvas.height = 64;
+            const pCtx = pCanvas.getContext('2d');
+            const grad = pCtx.createRadialGradient(32, 32, 0, 32, 32, 32);
+            grad.addColorStop(0, 'rgba(255,255,255,1)');
+            grad.addColorStop(0.5, 'rgba(255,200,255,0.5)');
+            grad.addColorStop(1, 'rgba(0,0,0,0)');
+            pCtx.fillStyle = grad; pCtx.fillRect(0,0,64,64);
+            const pTex = new THREE.CanvasTexture(pCanvas);
+
+            const particleMat = new THREE.PointsMaterial({ 
+                color: 0xffffff, 
+                size: 0.22, 
+                map: pTex, 
+                transparent: true, 
+                blending: THREE.AdditiveBlending, 
+                depthWrite: false 
+            });
+            stageElements.particles = new THREE.Points(particleGeo, particleMat);
+            scene.add(stageElements.particles);
+            
+            updateThemeColors();
+        }
+
+        function updateThemeColors() {
+            themeColor1 = color1Input.value;
+            themeColor2 = color2Input.value;
+            
+            const effectiveGlow = baseGlowIntensity;
+            
+            stageElements.mats1.forEach(mat => {
+                if (mat.color) mat.color.set(themeColor1);
+                if (mat.emissive) {
+                    mat.emissive.set(themeColor1);
+                    mat.emissiveIntensity = 1.5 * effectiveGlow;
+                }
+            });
+            stageElements.mats2.forEach(mat => {
+                if (mat.color) mat.color.set(themeColor2);
+                if (mat.emissive) {
+                    mat.emissive.set(themeColor2);
+                    mat.emissiveIntensity = 1.5 * effectiveGlow;
+                }
+            });
+            
+            stageElements.lights1.forEach(l => {
+                l.color.set(themeColor1);
+                l.intensity = 5.0 * effectiveGlow;
+            });
+            stageElements.lights2.forEach(l => {
+                l.color.set(themeColor2);
+                l.intensity = 5.0 * effectiveGlow;
+            });
+        }
+
+        function setCameraDistance(distance) {
+            const dir = new THREE.Vector3().subVectors(camera.position, controls.target).normalize();
+            camera.position.copy(controls.target).addScaledVector(dir, distance);
+            controls.update();
+            camDistLabel.innerText = distance.toFixed(1) + 'm';
+        }
+
+        function syncPlayFromStart() {
+            if (currentMixer) {
+                currentMixer.setTime(0);
+                currentMixer._actions.forEach(action => {
+                    action.reset();
+                    action.play();
+                });
+            }
+
+            imageProps.forEach(prop => {
+                if (prop.isVideo && prop.video) {
+                    prop.video.currentTime = 0;
+                    prop.video.play().catch(err => console.warn("Video play failed:", err));
+                    prop.isPlaying = true;
+                }
+            });
+
+            renderPropSlotsUI();
+            showMessage("0秒から同時再生を開始しました");
+        }
+
+        function handlePropFileLoad(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            if (imageProps.length >= MAX_PROPS) {
+                showMessage(`Maximum of ${MAX_PROPS} props allowed.`, true);
+                propFileInput.value = '';
+                return;
+            }
+
+            if (file.type.startsWith('video/')) {
+                const video = document.createElement('video');
+                video.src = URL.createObjectURL(file);
+                video.loop = true;
+                video.muted = true;
+                video.playsInline = true;
+                video.crossOrigin = 'anonymous';
+                video.play();
+                
+                video.onloadedmetadata = () => {
+                    const aspect = video.videoWidth / video.videoHeight;
+                    const baseHeight = 1.5;
+                    const baseWidth = baseHeight * aspect;
+                    
+                    const geometry = new THREE.PlaneGeometry(baseWidth, baseHeight);
+                    const texture = new THREE.VideoTexture(video);
+                    texture.colorSpace = THREE.SRGBColorSpace;
+                    
+                    const material = new THREE.ShaderMaterial({
+                        uniforms: {
+                            map: { value: texture },
+                            keyColor: { value: new THREE.Color(0x00ff00) },
+                            threshold: { value: 0.35 },
+                            smoothing: { value: 0.1 },
+                            useChromaKey: { value: 1.0 },
+                            saturation: { value: 1.0 },
+                            brightness: { value: 1.0 }
+                        },
+                        vertexShader: propShader.vertexShader,
+                        fragmentShader: propShader.fragmentShader,
+                        transparent: true,
+                        side: THREE.DoubleSide
+                    });
+                    
+                    const mesh = new THREE.Mesh(geometry, material);
+                    
+                    const angle = (imageProps.length / MAX_PROPS) * Math.PI * 2;
+                    const distance = 1.8;
+                    mesh.position.set(
+                        Math.sin(angle) * distance,
+                        baseHeight / 2,
+                        Math.cos(angle) * distance
+                    );
+                    mesh.rotation.y = angle + Math.PI;
+                    
+                    scene.add(mesh);
+                    
+                    const propData = {
+                        id: Date.now(),
+                        name: file.name,
+                        mesh: mesh,
+                        isVisible: true,
+                        isVideo: true,
+                        video: video,
+                        material: material,
+                        scale: 1.0,
+                        posX: mesh.position.x,
+                        posY: mesh.position.y,
+                        posZ: mesh.position.z,
+                        rotY: mesh.rotation.y * (180 / Math.PI),
+                        keyColor: '#00ff00',
+                        threshold: 0.35,
+                        smoothing: 0.1,
+                        saturation: 1.0,
+                        brightness: 1.0,
+                        isPlaying: true
+                    };
+                    
+                    imageProps.push(propData);
+                    renderPropSlotsUI();
+                    showMessage(`Added video prop: ${file.name}`);
+                    propFileInput.value = '';
+                };
+            } else {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const imageUrl = e.target.result;
+                    const textureLoader = new THREE.TextureLoader();
+                    
+                    textureLoader.load(imageUrl, (texture) => {
+                        texture.colorSpace = THREE.SRGBColorSpace;
+                        
+                        const imgWidth = texture.image.width;
+                        const imgHeight = texture.image.height;
+                        const aspect = imgWidth / imgHeight;
+                        
+                        const baseHeight = 1.5;
+                        const baseWidth = baseHeight * aspect;
+                        
+                        const geometry = new THREE.PlaneGeometry(baseWidth, baseHeight);
+                        const material = new THREE.ShaderMaterial({
+                            uniforms: {
+                                map: { value: texture },
+                                keyColor: { value: new THREE.Color(0x00ff00) },
+                                threshold: { value: 0.35 },
+                                smoothing: { value: 0.1 },
+                                useChromaKey: { value: 0.0 },
+                                saturation: { value: 1.0 },
+                                brightness: { value: 1.0 }
+                            },
+                            vertexShader: propShader.vertexShader,
+                            fragmentShader: propShader.fragmentShader,
+                            transparent: true,
+                            side: THREE.DoubleSide
+                        });
+                        
+                        const mesh = new THREE.Mesh(geometry, material);
+                        
+                        const angle = (imageProps.length / MAX_PROPS) * Math.PI * 2;
+                        const distance = 1.8;
+                        mesh.position.set(
+                            Math.sin(angle) * distance,
+                            baseHeight / 2,
+                            Math.cos(angle) * distance
+                        );
+                        mesh.rotation.y = angle + Math.PI;
+                        
+                        scene.add(mesh);
+                        
+                        const propData = {
+                            id: Date.now(),
+                            name: file.name,
+                            mesh: mesh,
+                            isVisible: true,
+                            isVideo: false,
+                            material: material,
+                            scale: 1.0,
+                            posX: mesh.position.x,
+                            posY: mesh.position.y,
+                            posZ: mesh.position.z,
+                            rotY: mesh.rotation.y * (180 / Math.PI),
+                            saturation: 1.0,
+                            brightness: 1.0
+                        };
+                        
+                        imageProps.push(propData);
+                        renderPropSlotsUI();
+                        showMessage(`Added image prop: ${file.name}`);
+                        propFileInput.value = '';
+                    }, undefined, () => {
+                        showMessage('Failed to load image for prop.', true);
+                        propFileInput.value = '';
+                    });
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function renderPropSlotsUI() {
+            propSlotsContainer.innerHTML = '';
+            propCountLabel.innerText = `${imageProps.length} / ${MAX_PROPS}`;
+            
+            if (imageProps.length === 0) {
+                propSlotsContainer.innerHTML = `<div class="text-xs text-gray-500 text-center py-1">No props added.</div>`;
+                return;
+            }
+            
+            imageProps.forEach((prop, index) => {
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'prop-item';
+                
+                let chromaKeyControls = '';
+                if (prop.isVideo) {
+                    chromaKeyControls = `
+                        <div class="prop-row border-t border-gray-700/50 pt-1 mt-1">
+                            <span class="text-xs font-medium text-cyan-300">Chroma Key (背景抜き)</span>
+                        </div>
+                        <div class="prop-row">
+                            <div class="slider-group"><label>Color</label><input type="color" value="${prop.keyColor}" class="prop-keycolor" data-id="${prop.id}"></div>
+                            <div class="slider-group"><label>Sens</label><input type="range" min="0.05" max="0.8" step="0.02" value="${prop.threshold}" class="prop-threshold" data-id="${prop.id}"></div>
+                        </div>
+                        <div class="prop-row">
+                            <button class="btn btn-secondary text-xs py-0.5 px-2 prop-video-toggle" data-id="${prop.id}" style="pointer-events: auto;">${prop.isPlaying ? 'Pause Video' : 'Play Video'}</button>
+                        </div>
+                    `;
+                }
+
+                itemDiv.innerHTML = `
+                    <div class="prop-row font-semibold text-gray-200 flex justify-between items-center w-full">
+                        <span class="truncate max-w-[110px]" title="${prop.name}">#${index + 1} (${prop.isVideo ? 'Video' : 'Img'}): ${prop.name}</span>
+                        <div class="flex gap-1">
+                            <button class="text-gray-300 hover:text-white text-xs px-1.5 py-0.5 bg-gray-700/60 rounded cursor-pointer prop-visibility-toggle" style="pointer-events: auto;" data-id="${prop.id}">${prop.isVisible ? 'Hide' : 'Show'}</button>
+                            <button class="text-red-400 hover:text-red-300 text-xs px-1.5 py-0.5 bg-red-950/60 rounded cursor-pointer prop-remove-btn" style="pointer-events: auto;" data-id="${prop.id}">Remove</button>
+                        </div>
+                    </div>
+                    <div class="prop-row">
+                        <div class="slider-group"><label>Size</label><input type="range" min="0.2" max="3.0" step="0.1" value="${prop.scale}" class="prop-scale" data-id="${prop.id}"></div>
+                    </div>
+                    <div class="prop-row">
+                        <div class="slider-group"><label>X</label><input type="range" min="-4.0" max="4.0" step="0.1" value="${prop.posX}" class="prop-posx" data-id="${prop.id}"></div>
+                        <div class="slider-group"><label>Z</label><input type="range" min="-4.0" max="4.0" step="0.1" value="${prop.posZ}" class="prop-posz" data-id="${prop.id}"></div>
+                    </div>
+                    <div class="prop-row">
+                        <div class="slider-group"><label>H</label><input type="range" min="0.0" max="3.0" step="0.1" value="${prop.posY}" class="prop-posy" data-id="${prop.id}"></div>
+                        <div class="slider-group"><label>Rot</label><input type="range" min="-180" max="180" step="5" value="${prop.rotY}" class="prop-roty" data-id="${prop.id}"></div>
+                    </div>
+                    <div class="prop-row border-t border-gray-700/50 pt-1 mt-1">
+                        <div class="slider-group"><label>彩度</label><input type="range" min="0.0" max="2.0" step="0.05" value="${prop.saturation !== undefined ? prop.saturation : 1.0}" class="prop-saturation" data-id="${prop.id}"></div>
+                        <div class="slider-group"><label>明度</label><input type="range" min="0.0" max="2.0" step="0.05" value="${prop.brightness !== undefined ? prop.brightness : 1.0}" class="prop-brightness" data-id="${prop.id}"></div>
+                    </div>
+                    ${chromaKeyControls}
+                `;
+                propSlotsContainer.appendChild(itemDiv);
+            });
+            
+            propSlotsContainer.querySelectorAll('button[data-id]').forEach(btn => {
+                if (btn.classList.contains('prop-video-toggle')) {
+                    btn.addEventListener('click', (e) => {
+                        const id = Number(e.target.getAttribute('data-id'));
+                        toggleVideoPropPlayback(id);
+                    });
+                } else if (btn.classList.contains('prop-visibility-toggle')) {
+                    btn.addEventListener('click', (e) => {
+                        const id = Number(e.target.getAttribute('data-id'));
+                        togglePropVisibility(id);
+                    });
+                } else if (btn.classList.contains('prop-remove-btn')) {
+                    btn.addEventListener('click', (e) => {
+                        const id = Number(e.target.getAttribute('data-id'));
+                        removeProp(id);
+                    });
+                }
+            });
+            
+            propSlotsContainer.querySelectorAll('input').forEach(input => {
+                input.addEventListener('input', (e) => {
+                    const id = Number(e.target.getAttribute('data-id'));
+                    const val = e.target.type === 'color' ? e.target.value : parseFloat(e.target.value);
+                    updatePropTransform(id, e.target.className, val);
+                });
+            });
+        }
+
+        function toggleVideoPropPlayback(id) {
+            const prop = imageProps.find(p => p.id === id);
+            if (!prop || !prop.isVideo) return;
+            prop.isPlaying = !prop.isPlaying;
+            if (prop.isPlaying) {
+                prop.video.play();
+            } else {
+                prop.video.pause();
+            }
+            renderPropSlotsUI();
+        }
+
+        function togglePropVisibility(id) {
+            const prop = imageProps.find(p => p.id === id);
+            if (!prop) return;
+            prop.isVisible = !prop.isVisible;
+            prop.mesh.visible = prop.isVisible;
+            renderPropSlotsUI();
+        }
+
+        function updatePropTransform(id, className, val) {
+            const prop = imageProps.find(p => p.id === id);
+            if (!prop) return;
+            
+            if (className.includes('prop-scale')) {
+                prop.scale = val;
+                prop.mesh.scale.set(val, val, val);
+            } else if (className.includes('prop-posx')) {
+                prop.posX = val;
+                prop.mesh.position.x = val;
+            } else if (className.includes('prop-posz')) {
+                prop.posZ = val;
+                prop.mesh.position.z = val;
+            } else if (className.includes('prop-posy')) {
+                prop.posY = val;
+                prop.mesh.position.y = val;
+            } else if (className.includes('prop-roty')) {
+                prop.rotY = val;
+                prop.mesh.rotation.y = val * (Math.PI / 180);
+            } else if (className.includes('prop-saturation')) {
+                prop.saturation = val;
+                if (prop.material && prop.material.uniforms && prop.material.uniforms.saturation) {
+                    prop.material.uniforms.saturation.value = val;
+                }
+            } else if (className.includes('prop-brightness')) {
+                prop.brightness = val;
+                if (prop.material && prop.material.uniforms && prop.material.uniforms.brightness) {
+                    prop.material.uniforms.brightness.value = val;
+                }
+            } else if (className.includes('prop-keycolor')) {
+                prop.keyColor = val;
+                prop.material.uniforms.keyColor.value.set(val);
+            } else if (className.includes('prop-threshold')) {
+                prop.threshold = val;
+                prop.material.uniforms.threshold.value = val;
+            }
+        }
+
+        function removeProp(id) {
+            const index = imageProps.findIndex(p => p.id === id);
+            if (index !== -1) {
+                const prop = imageProps[index];
+                if (prop.isVideo && prop.video) {
+                    prop.video.pause();
+                    prop.video.src = "";
+                }
+                scene.remove(prop.mesh);
+                prop.mesh.geometry.dispose();
+                if (prop.mesh.material.map) prop.mesh.material.map.dispose();
+                prop.mesh.material.dispose();
+                
+                imageProps.splice(index, 1);
+                renderPropSlotsUI();
+                showMessage("Prop removed.");
+            }
+        }
+
+        function toggleUI() {
+            uiLayer.classList.toggle('hidden');
+        }
+        
+        function handleTouchStart(event) {
+            if (event.touches.length === 4) {
+                event.preventDefault();
+                toggleUI();
+            }
+        }
+
+        function updateStatus() {
+            if (!currentVrm) {
+                statusText.innerText = "Load a VRM (.vrm) model.";
+                vrmaInput.disabled = true;
+                vrmaWrapper.style.opacity = "0.5";
+            } else if (!currentMixer) {
+                statusText.innerText = "Model loaded! Now load VRMA motion.";
+                vrmaInput.disabled = false;
+                vrmaWrapper.style.opacity = "1";
+            } else {
+                statusText.innerText = "Playing animation smoothly!";
+            }
+        }
+
+        async function parseFileToBlobUrl(file, targetExtension) {
+            const name = file.name.toLowerCase();
+            if (name.endsWith('.zip')) {
+                try {
+                    const zip = new JSZip();
+                    const zipContent = await zip.loadAsync(file);
+                    let foundFileKey = null;
+                    
+                    for (let filename of Object.keys(zipContent.files)) {
+                        if (filename.toLowerCase().endsWith(targetExtension)) {
+                            foundFileKey = filename;
+                            break;
+                        }
+                    }
+                    
+                    if (foundFileKey) {
+                        const blob = await zipContent.files[foundFileKey].async('blob');
+                        return URL.createObjectURL(blob);
+                    } else {
+                        throw new Error(`No .${targetExtension} file found inside ZIP.`);
+                    }
+                } catch (err) {
+                    throw err;
+                }
+            } else {
+                return URL.createObjectURL(file);
+            }
+        }
+
+        async function loadVRMFromFile(file) {
+            showLoading(`Loading model: ${file.name}...`);
+            try {
+                const url = await parseFileToBlobUrl(file, 'vrm');
+                const loader = new GLTFLoader();
+                loader.register((parser) => new VRMLoaderPlugin(parser));
+                loader.register((parser) => new VRMAnimationLoaderPlugin(parser));
+
+                loader.load(
+                    url,
+                    (gltf) => {
+                        const vrm = gltf.userData.vrm;
+                        if (!vrm) {
+                            hideLoading();
+                            showMessage("Failed to parse VRM from the file.", true);
+                            return;
+                        }
+                        
+                        if (currentVrm) {
+                            scene.remove(currentVrm.scene);
+                            VRMUtils.deepDispose(currentVrm.scene);
+                        }
+                        
+                        if (currentMixer) {
+                            currentMixer.stopAllAction();
+                            currentMixer = null;
+                        }
+
+                        currentVrm = vrm;
+                        scene.add(vrm.scene);
+
+                        VRMUtils.rotateVRM0(vrm);
+                        
+                        vrm.scene.traverse((obj) => {
+                            obj.frustumCulled = false;
+                        });
+
+                        if (vrm.lookAt) {
+                            vrm.lookAt.target = null;
+                        }
+
+                        const lookAtQuatProxy = new VRMLookAtQuaternionProxy(vrm.lookAt);
+                        lookAtQuatProxy.name = 'lookAtQuaternionProxy';
+                        vrm.scene.add(lookAtQuatProxy);
+
+                        vrm.scene.scale.set(baseModelScale, baseModelScale, baseModelScale);
+
+                        vrmBtnText.innerText = "Change Model";
+                        hideLoading();
+                        URL.revokeObjectURL(url);
+                        updateStatus();
+                        showMessage("VRM model loaded successfully!", false);
+                    },
+                    (progress) => {
+                        if (progress.total > 0) {
+                            const percent = Math.round((progress.loaded / progress.total) * 100);
+                            loadingText.innerText = `Loading model: ${percent}%`;
+                        }
+                    },
+                    (error) => {
+                        console.error('Error loading VRM:', error);
+                        hideLoading();
+                        showMessage("Error loading VRM file. Check console.", true);
+                    }
+                );
+            } catch (err) {
+                hideLoading();
+                showMessage("Failed to read VRM file. Ensure it's a valid .vrm.", true);
+            }
+        }
+
+        async function loadVRMAFromFile(file) {
+            if (!currentVrm) {
+                showMessage("Please load a VRM model first.", true);
+                return;
+            }
+
+            showLoading(`Loading animation: ${file.name}...`);
+            try {
+                const url = await parseFileToBlobUrl(file, 'vrma');
+                const loader = new GLTFLoader();
+                loader.register((parser) => new VRMLoaderPlugin(parser));
+                loader.register((parser) => new VRMAnimationLoaderPlugin(parser));
+
+                loader.load(
+                    url,
+                    (gltf) => {
+                        const vrmAnimations = gltf.userData.vrmAnimations;
+                        
+                        if (vrmAnimations && vrmAnimations.length > 0) {
+                            const vrma = vrmAnimations[0];
+                            
+                            if (currentMixer) {
+                                currentMixer.stopAllAction();
+                            }
+                            currentMixer = new THREE.AnimationMixer(currentVrm.scene);
+                            
+                            const clip = createVRMAnimationClip(vrma, currentVrm);
+                            const action = currentMixer.clipAction(clip);
+                            action.play();
+                            
+                            vrmaBtnText.innerText = "Change Motion";
+                            showMessage("VRMA motion loaded and playing!", false);
+                        } else {
+                            showMessage("No VRMA data found in file.", true);
+                        }
+                        
+                        hideLoading();
+                        URL.revokeObjectURL(url);
+                        updateStatus();
+                    },
+                    (progress) => {
+                        if (progress.total > 0) {
+                            const percent = Math.round((progress.loaded / progress.total) * 100);
+                            loadingText.innerText = `Loading motion: ${percent}%`;
+                        }
+                    },
+                    (error) => {
+                        console.error('Error loading VRMA:', error);
+                        hideLoading();
+                        showMessage("Error loading VRMA file. Check console.", true);
+                    }
+                );
+            } catch(err) {
+                hideLoading();
+                showMessage("Failed to read VRMA file. Ensure it's a valid .vrma.", true);
+            }
+        }
+
+        function handleVRMLoad(event) {
+            const file = event.target.files[0];
+            if (file) loadVRMFromFile(file);
+            event.target.value = '';
+        }
+
+        function handleVRMALoad(event) {
+            const file = event.target.files[0];
+            if (file) loadVRMAFromFile(file);
+            event.target.value = '';
+        }
+
+        function handleFileDrop(event) {
+            event.preventDefault();
+            const files = event.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                const ext = file.name.split('.').pop().toLowerCase();
+                if (ext === 'vrm' || ext === 'zip') {
+                    loadVRMFromFile(file);
+                } else if (ext === 'vrma') {
+                    loadVRMAFromFile(file);
+                } else if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
+                    const dataTransfer = new DataTransfer();
+                    dataTransfer.items.add(file);
+                    propFileInput.files = dataTransfer.files;
+                    handlePropFileLoad({ target: propFileInput });
+                }
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const deltaTime = clock.getDelta();
+            const time = clock.getElapsedTime();
+
+            if (currentMixer) {
+                currentMixer.update(deltaTime);
+            }
+
+            if (currentVrm) {
+                currentVrm.update(deltaTime);
+            }
+
+            stageElements.audienceSticks.forEach(stickData => {
+                stickData.mesh.rotation.x = -Math.PI / 6 + Math.sin(time * stickData.speed + stickData.offset) * 0.35;
+            });
+
+            if (stageElements.strobeLights.length > 0) {
+                const strobe = stageElements.strobeLights[0];
+                const flashTrigger = Math.sin(time * 12) * Math.cos(time * 7);
+                strobe.intensity = flashTrigger > 0.85 ? 4.5 : 0;
+            }
+
+            if (stageElements.particles) {
+                const positions = stageElements.particles.geometry.attributes.position.array;
+                for(let i=0; i<positions.length / 3; i++) {
+                    positions[i*3] += stageElements.particleVelocities[i].x + Math.sin(time + i) * 0.003;
+                    positions[i*3+1] += stageElements.particleVelocities[i].y;
+                    positions[i*3+2] += stageElements.particleVelocities[i].z;
+                    
+                    if (positions[i*3+1] < 0) {
+                        positions[i*3+1] = 10;
+                        positions[i*3] = (Math.random() - 0.5) * 22;
+                    }
+                }
+                stageElements.particles.geometry.attributes.position.needsUpdate = true;
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
