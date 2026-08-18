@@ -154,6 +154,16 @@
                 </div>
             </div>
 
+            <div class="props-panel-section">
+                <div class="text-xs font-semibold text-gray-300 flex justify-between items-center">
+                    <span>Live Monitor (ライブモニター調整)</span>
+                </div>
+                <div class="prop-row mt-1">
+                    <div class="slider-group"><label style="width:40px;">Zoom</label><input type="range" id="screen-zoom-slider" min="10" max="80" step="1" value="30"></div>
+                    <div class="slider-group"><label style="width:45px;">Height</label><input type="range" id="screen-height-slider" min="0" max="3.0" step="0.1" value="1.2"></div>
+                </div>
+            </div>
+
             <!-- Image & Video Props with Chroma Key Section -->
             <div class="props-panel-section">
                 <div class="text-xs font-semibold text-gray-300 flex justify-between items-center">
@@ -179,8 +189,14 @@
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
         import { VRMAnimationLoaderPlugin, createVRMAnimationClip, VRMLookAtQuaternionProxy } from '@pixiv/three-vrm-animation';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
         let scene, camera, renderer, controls;
+        let composer, bloomPass;
+        let screenCamera, screenRenderTarget, mainScreenMesh;
         let currentVrm = null;
         let currentMixer = null;
         let clock = new THREE.Clock();
@@ -230,6 +246,8 @@
         const modelScaleLabel = document.getElementById('model-scale-label');
         const glowIntensitySlider = document.getElementById('glow-intensity-slider');
         const glowIntensityLabel = document.getElementById('glow-intensity-label');
+        const screenZoomSlider = document.getElementById('screen-zoom-slider');
+        const screenHeightSlider = document.getElementById('screen-height-slider');
 
         const propShader = {
             uniforms: {
@@ -266,10 +284,8 @@
                         if (alpha < 0.05) discard;
                     }
                     vec3 color = texColor.rgb;
-                    // Saturation
                     float gray = dot(color, vec3(0.2126, 0.7152, 0.0722));
                     color = mix(vec3(gray), color, saturation);
-                    // Brightness
                     color = color * brightness;
                     gl_FragColor = vec4(color, alpha);
                 }
@@ -316,6 +332,19 @@
             controls.maxPolarAngle = Math.PI / 2 + 0.1;
             controls.update();
 
+            const renderScene = new RenderPass(scene, camera);
+            bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+            bloomPass.threshold = 0.85; // 適切な閾値に設定
+            bloomPass.strength = 0.8 * baseGlowIntensity; 
+            bloomPass.radius = 0.6; 
+
+            const outputPass = new OutputPass();
+
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderScene);
+            composer.addPass(bloomPass);
+            composer.addPass(outputPass);
+
             mainLight = new THREE.DirectionalLight(0xffffff, parseFloat(lightMainSlider.value));
             mainLight.position.set(1.0, 5.0, 4.0).normalize();
             scene.add(mainLight);
@@ -356,7 +385,25 @@
             glowIntensitySlider.addEventListener('input', (e) => {
                 baseGlowIntensity = parseFloat(e.target.value);
                 glowIntensityLabel.innerText = baseGlowIntensity.toFixed(1) + 'x';
+                if (bloomPass) {
+                    bloomPass.strength = 0.8 * baseGlowIntensity;
+                }
                 updateThemeColors();
+            });
+
+            screenZoomSlider.addEventListener('input', (e) => {
+                if (screenCamera) {
+                    screenCamera.fov = parseFloat(e.target.value);
+                    screenCamera.updateProjectionMatrix();
+                }
+            });
+            
+            screenHeightSlider.addEventListener('input', (e) => {
+                if (screenCamera) {
+                    const targetY = parseFloat(e.target.value);
+                    screenCamera.position.set(0, targetY - 0.2, 3.5);
+                    screenCamera.lookAt(0, targetY, 0);
+                }
             });
 
             document.getElementById('cam-preset-close').addEventListener('click', () => {
@@ -388,6 +435,9 @@
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
+            if (composer) {
+                composer.setSize(window.innerWidth, window.innerHeight);
+            }
         }
         
         function buildLiveStage() {
@@ -436,18 +486,41 @@
             centerStage.position.y = -0.02;
             scene.add(centerStage);
 
-            const screenMat = new THREE.MeshBasicMaterial({ color: 0x111622 });
-            const mainScreenGeo = new THREE.PlaneGeometry(11, 5.5);
-            const mainScreen = new THREE.Mesh(mainScreenGeo, screenMat);
-            mainScreen.position.set(0, 4.2, -8.1);
-            scene.add(mainScreen);
+            // Render Target for the live screen (鮮やかな色をそのままクリアに保つため通常のレンダーターゲットに)
+            screenRenderTarget = new THREE.WebGLRenderTarget(2048, 1024, {
+                format: THREE.RGBAFormat,
+                minFilter: THREE.LinearFilter,
+                magFilter: THREE.LinearFilter,
+                generateMipmaps: false,
+                samples: 4
+            });
+            screenRenderTarget.texture.colorSpace = THREE.SRGBColorSpace;
+            
+            screenCamera = new THREE.PerspectiveCamera(30.0, 2048 / 1024, 0.1, 100.0);
+            screenCamera.position.set(0, 1.0, 3.5);
+            screenCamera.lookAt(0, 1.2, 0);
 
-            const frameMat = new THREE.MeshStandardMaterial({ color: 0x3b82f6, emissive: 0x3b82f6, emissiveIntensity: 1.2 });
-            stageElements.mats1.push(frameMat);
-            const frameGeo = new THREE.RingGeometry(2.0, 2.1, 32);
-            const ring = new THREE.Mesh(frameGeo, frameMat);
-            ring.position.set(0, 4.2, -8.0);
-            scene.add(ring);
+            const screenMat = new THREE.MeshBasicMaterial({ 
+                color: 0xffffff, 
+                map: screenRenderTarget.texture 
+            });
+            const mainScreenGeo = new THREE.PlaneGeometry(16, 8);
+            mainScreenMesh = new THREE.Mesh(mainScreenGeo, screenMat);
+            mainScreenMesh.position.set(0, 5.0, -8.1);
+            scene.add(mainScreenMesh);
+
+            const screenBorderMat = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.9, roughness: 0.5 });
+            const screenBorderGeo = new THREE.BoxGeometry(16.4, 8.4, 0.15);
+            const screenBorderMesh = new THREE.Mesh(screenBorderGeo, screenBorderMat);
+            screenBorderMesh.position.set(0, 5.0, -8.2);
+            scene.add(screenBorderMesh);
+
+            const screenGlowMat = new THREE.MeshStandardMaterial({ color: themeColor1, emissive: themeColor1, emissiveIntensity: 4.0 });
+            stageElements.mats1.push(screenGlowMat);
+            const screenGlowGeo = new THREE.BoxGeometry(16.6, 8.6, 0.1);
+            const screenGlowMesh = new THREE.Mesh(screenGlowGeo, screenGlowMat);
+            screenGlowMesh.position.set(0, 5.0, -8.35);
+            scene.add(screenGlowMesh);
 
             const createLightPillar = (x, z) => {
                 const pillarMat = new THREE.MeshStandardMaterial({ color: 0x111827, metalness: 0.9, roughness: 0.1 });
@@ -459,7 +532,7 @@
                 for(let i=0; i<4; i++) {
                     const orbGeo = new THREE.SphereGeometry(0.55, 16, 16);
                     const isTheme1 = (i % 2 === 0);
-                    const orbMat = new THREE.MeshStandardMaterial({ color: isTheme1 ? themeColor1 : themeColor2, emissive: isTheme1 ? themeColor1 : themeColor2, emissiveIntensity: 1.5 });
+                    const orbMat = new THREE.MeshStandardMaterial({ color: isTheme1 ? themeColor1 : themeColor2, emissive: isTheme1 ? themeColor1 : themeColor2, emissiveIntensity: 4.0 });
                     const orb = new THREE.Mesh(orbGeo, orbMat);
                     orb.position.set(x, 1.8 + (i * 1.8), z + 0.3);
                     scene.add(orb);
@@ -492,7 +565,7 @@
             const stickGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.45, 8);
             for(let i=0; i<200; i++) {
                 const isTheme1 = Math.random() > 0.5;
-                const stickMat = new THREE.MeshStandardMaterial({ color: isTheme1 ? themeColor1 : themeColor2, emissive: isTheme1 ? themeColor1 : themeColor2, emissiveIntensity: 1.0 });
+                const stickMat = new THREE.MeshStandardMaterial({ color: isTheme1 ? themeColor1 : themeColor2, emissive: isTheme1 ? themeColor1 : themeColor2, emissiveIntensity: 4.0 });
                 const stick = new THREE.Mesh(stickGeo, stickMat);
                 
                 const x = (Math.random() - 0.5) * 40;
@@ -553,30 +626,28 @@
             themeColor1 = color1Input.value;
             themeColor2 = color2Input.value;
             
-            const effectiveGlow = baseGlowIntensity;
-            
             stageElements.mats1.forEach(mat => {
                 if (mat.color) mat.color.set(themeColor1);
                 if (mat.emissive) {
                     mat.emissive.set(themeColor1);
-                    mat.emissiveIntensity = 1.5 * effectiveGlow;
+                    mat.emissiveIntensity = 4.0;
                 }
             });
             stageElements.mats2.forEach(mat => {
                 if (mat.color) mat.color.set(themeColor2);
                 if (mat.emissive) {
                     mat.emissive.set(themeColor2);
-                    mat.emissiveIntensity = 1.5 * effectiveGlow;
+                    mat.emissiveIntensity = 4.0;
                 }
             });
             
             stageElements.lights1.forEach(l => {
                 l.color.set(themeColor1);
-                l.intensity = 5.0 * effectiveGlow;
+                l.intensity = 6.0 * baseGlowIntensity;
             });
             stageElements.lights2.forEach(l => {
                 l.color.set(themeColor2);
-                l.intensity = 5.0 * effectiveGlow;
+                l.intensity = 6.0 * baseGlowIntensity;
             });
         }
 
@@ -1181,8 +1252,23 @@
                 stageElements.particles.geometry.attributes.position.needsUpdate = true;
             }
 
+            if (screenRenderTarget && mainScreenMesh) {
+                mainScreenMesh.visible = false;
+                
+                // モニター用カメラで直接鮮明な映像をレンダーターゲットに描画
+                renderer.setRenderTarget(screenRenderTarget);
+                renderer.render(scene, screenCamera);
+                renderer.setRenderTarget(null);
+                
+                mainScreenMesh.visible = true;
+            }
+
             controls.update();
-            renderer.render(scene, camera);
+            if (composer) {
+                composer.render();
+            } else {
+                renderer.render(scene, camera);
+            }
         }
 
         window.onload = init;
