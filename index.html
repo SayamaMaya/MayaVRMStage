@@ -169,6 +169,13 @@
                 <div class="text-xs font-semibold text-gray-300 flex justify-between items-center">
                     <span>Live Monitor (ライブモニター調整)</span>
                 </div>
+                <div class="flex gap-1.5 mt-1 justify-center">
+                    <button class="btn btn-primary text-xs py-1 px-1 flex-1" id="monitor-live-btn" style="pointer-events: auto;">ライブカメラ</button>
+                    <div class="file-input-wrapper flex-1">
+                        <button class="btn btn-secondary text-xs py-1 px-1 w-full" id="monitor-media-btn" style="pointer-events: auto; padding: 0.25rem 0;">メディア投影</button>
+                        <input type="file" id="monitor-media-input" accept="image/*,video/*" />
+                    </div>
+                </div>
                 <div class="prop-row mt-1">
                     <div class="slider-group"><label style="width:40px;">Zoom</label><input type="range" id="screen-zoom-slider" min="10" max="80" step="1" value="30"></div>
                     <div class="slider-group"><label style="width:45px;">Height</label><input type="range" id="screen-height-slider" min="0" max="3.0" step="0.1" value="1.2"></div>
@@ -230,6 +237,10 @@
         
         let currentParticleType = 'snow';
         const dummy = new THREE.Object3D();
+        
+        let monitorMode = 'live'; // 'live' or 'media'
+        let monitorMediaVideo = null;
+        let monitorMediaTexture = null;
         
         let imageProps = [];
         const MAX_PROPS = 4;
@@ -423,6 +434,23 @@
                 }
             });
 
+            document.getElementById('monitor-live-btn').addEventListener('click', () => {
+                document.getElementById('monitor-live-btn').classList.replace('btn-secondary', 'btn-primary');
+                document.getElementById('monitor-media-btn').classList.replace('btn-primary', 'btn-secondary');
+                monitorMode = 'live';
+                if (mainScreenMesh && screenRenderTarget) {
+                    mainScreenMesh.material.map = screenRenderTarget.texture;
+                    mainScreenMesh.material.needsUpdate = true;
+                    // ライブモニターに戻る時はアスペクト比をリセット(16:8の全体を使用)
+                    mainScreenMesh.scale.set(1, 1, 1);
+                }
+                if (monitorMediaVideo) {
+                    monitorMediaVideo.pause();
+                }
+            });
+            
+            document.getElementById('monitor-media-input').addEventListener('change', handleMonitorMediaLoad);
+
             document.getElementById('cam-preset-close').addEventListener('click', () => {
                 camDistanceSlider.value = 2.0;
                 setCameraDistance(2.0);
@@ -539,6 +567,14 @@
                 color: 0xffffff, 
                 map: screenRenderTarget.texture 
             });
+
+            // モニターの背景用黒スクリーン（アスペクト比調整時の余白/黒帯用）
+            const screenBgMat = new THREE.MeshBasicMaterial({ color: 0x020202 });
+            const screenBgGeo = new THREE.PlaneGeometry(16, 8);
+            const screenBgMesh = new THREE.Mesh(screenBgGeo, screenBgMat);
+            screenBgMesh.position.set(0, 5.0, -8.15);
+            scene.add(screenBgMesh);
+
             const mainScreenGeo = new THREE.PlaneGeometry(16, 8);
             mainScreenMesh = new THREE.Mesh(mainScreenGeo, screenMat);
             mainScreenMesh.position.set(0, 5.0, -8.1);
@@ -660,13 +696,22 @@
             const colors = [0xff0066, 0x00ccff, 0xffcc00, 0x00ff66, 0xffffff];
             
             for (let i = 0; i < particleCount; i++) {
-                dummy.position.set((Math.random() - 0.5) * 22, Math.random() * 10 + 2, (Math.random() - 0.5) * 16 - 2);
-                dummy.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+                const px = (Math.random() - 0.5) * 22;
+                const py = Math.random() * 10 + 2;
+                const pz = (Math.random() - 0.5) * 16 - 2;
+                const rx = Math.random() * Math.PI;
+                const ry = Math.random() * Math.PI;
+                const rz = Math.random() * Math.PI;
+
+                dummy.position.set(px, py, pz);
+                dummy.rotation.set(rx, ry, rz);
                 dummy.updateMatrix();
                 confettiMesh.setMatrixAt(i, dummy.matrix);
                 confettiMesh.setColorAt(i, new THREE.Color(colors[Math.floor(Math.random() * colors.length)]));
                 
                 stageElements.particles.confetti.data.push({
+                    pos: { x: px, y: py, z: pz },
+                    rot: { x: rx, y: ry, z: rz },
                     rotSpeed: { x: (Math.random()-0.5)*0.2, y: (Math.random()-0.5)*0.2, z: (Math.random()-0.5)*0.2 },
                     vel: { x: (Math.random()-0.5)*0.03, y: -Math.random()*0.05 - 0.03, z: (Math.random()-0.5)*0.03 }
                 });
@@ -694,20 +739,28 @@
             const bCanvas = document.createElement('canvas');
             bCanvas.width = 64; bCanvas.height = 64;
             const bCtx = bCanvas.getContext('2d');
+            
+            // シャボン玉の質感をより柔らかく透明感のあるものに変更
+            const bGrad = bCtx.createRadialGradient(32, 32, 10, 32, 32, 30);
+            bGrad.addColorStop(0, 'rgba(255, 255, 255, 0.0)');
+            bGrad.addColorStop(0.7, 'rgba(200, 230, 255, 0.15)');
+            bGrad.addColorStop(0.9, 'rgba(255, 255, 255, 0.45)');
+            bGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+            
+            bCtx.fillStyle = bGrad;
+            bCtx.fillRect(0, 0, 64, 64);
+            
+            // ハイライトをふんわりさせる
             bCtx.beginPath();
-            bCtx.arc(32, 32, 28, 0, Math.PI * 2);
-            bCtx.lineWidth = 3;
-            bCtx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
-            bCtx.stroke();
-            bCtx.beginPath();
-            bCtx.arc(20, 20, 6, 0, Math.PI * 2);
-            bCtx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            bCtx.arc(22, 20, 5, 0, Math.PI * 2);
+            bCtx.fillStyle = 'rgba(255, 255, 255, 0.5)';
             bCtx.fill();
+            
             const bubbleTex = new THREE.CanvasTexture(bCanvas);
 
             const bubbleMat = new THREE.PointsMaterial({ 
-                color: 0xffffff, size: 0.35, map: bubbleTex, 
-                transparent: true, blending: THREE.AdditiveBlending, depthWrite: false 
+                color: 0xffffff, size: 0.4, map: bubbleTex, 
+                transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false 
             });
             stageElements.particles.bubbles.mesh = new THREE.Points(bubbleGeo, bubbleMat);
             stageElements.particles.bubbles.mesh.visible = false; // Default off
@@ -769,8 +822,93 @@
                 }
             });
 
+            if (monitorMode === 'media' && monitorMediaVideo) {
+                monitorMediaVideo.currentTime = 0;
+                monitorMediaVideo.play().catch(err => console.warn("Monitor video play failed:", err));
+            }
+
             renderPropSlotsUI();
             showMessage("0秒から同時再生を開始しました");
+        }
+
+        function handleMonitorMediaLoad(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            document.getElementById('monitor-live-btn').classList.replace('btn-primary', 'btn-secondary');
+            document.getElementById('monitor-media-btn').classList.replace('btn-secondary', 'btn-primary');
+            monitorMode = 'media';
+
+            if (monitorMediaVideo) {
+                monitorMediaVideo.pause();
+                monitorMediaVideo.removeAttribute('src');
+                monitorMediaVideo.load();
+                monitorMediaVideo = null;
+            }
+            if (monitorMediaTexture) {
+                monitorMediaTexture.dispose();
+                monitorMediaTexture = null;
+            }
+
+            if (file.type.startsWith('video/')) {
+                const video = document.createElement('video');
+                video.src = URL.createObjectURL(file);
+                video.loop = true;
+                video.muted = true;
+                video.playsInline = true;
+                video.crossOrigin = 'anonymous';
+                
+                // メタデータが読み込まれてから正しい縦横比を計算する
+                video.onloadedmetadata = () => {
+                    video.play();
+                    
+                    monitorMediaVideo = video;
+                    monitorMediaTexture = new THREE.VideoTexture(video);
+                    monitorMediaTexture.colorSpace = THREE.SRGBColorSpace;
+                    
+                    if (mainScreenMesh) {
+                        mainScreenMesh.material.map = monitorMediaTexture;
+                        mainScreenMesh.material.needsUpdate = true;
+                        
+                        // 動画のアスペクト比に合わせてスケール調整
+                        const mediaAspect = video.videoWidth / video.videoHeight;
+                        const screenAspect = 16 / 8; // モニターの基準アスペクト比 (2.0)
+                        if (mediaAspect > screenAspect) {
+                            mainScreenMesh.scale.set(1, screenAspect / mediaAspect, 1);
+                        } else {
+                            mainScreenMesh.scale.set(mediaAspect / screenAspect, 1, 1);
+                        }
+                    }
+                    showMessage(`Monitor updated with video: ${file.name}`);
+                };
+            } else {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const imageUrl = e.target.result;
+                    const textureLoader = new THREE.TextureLoader();
+                    textureLoader.load(imageUrl, (texture) => {
+                        texture.colorSpace = THREE.SRGBColorSpace;
+                        monitorMediaTexture = texture;
+                        
+                        if (mainScreenMesh) {
+                            mainScreenMesh.material.map = monitorMediaTexture;
+                            mainScreenMesh.material.needsUpdate = true;
+                            
+                            // 画像のアスペクト比に合わせてスケール調整
+                            const mediaAspect = texture.image.width / texture.image.height;
+                            const screenAspect = 16 / 8; // モニターの基準アスペクト比 (2.0)
+                            if (mediaAspect > screenAspect) {
+                                mainScreenMesh.scale.set(1, screenAspect / mediaAspect, 1);
+                            } else {
+                                mainScreenMesh.scale.set(mediaAspect / screenAspect, 1, 1);
+                            }
+                        }
+                        showMessage(`Monitor updated with image: ${file.name}`);
+                    });
+                };
+                reader.readAsDataURL(file);
+            }
+            event.target.value = '';
         }
 
         function handlePropFileLoad(event) {
@@ -1350,26 +1488,26 @@
                 const mesh = stageElements.particles.confetti.mesh;
                 const data = stageElements.particles.confetti.data;
                 for(let i=0; i<data.length; i++){
-                    mesh.getMatrixAt(i, dummy.matrix);
-                    dummy.matrix.decompose(dummy.position, dummy.quaternion, dummy.scale);
+                    const p = data[i];
+                    p.pos.x += p.vel.x + Math.sin(time + i) * 0.005;
+                    p.pos.y += p.vel.y;
+                    p.pos.z += p.vel.z;
                     
-                    dummy.position.x += data[i].vel.x + Math.sin(time + i) * 0.005;
-                    dummy.position.y += data[i].vel.y;
-                    dummy.position.z += data[i].vel.z;
+                    p.rot.x += p.rotSpeed.x;
+                    p.rot.y += p.rotSpeed.y;
+                    p.rot.z += p.rotSpeed.z;
                     
-                    dummy.rotation.x += data[i].rotSpeed.x;
-                    dummy.rotation.y += data[i].rotSpeed.y;
-                    dummy.rotation.z += data[i].rotSpeed.z;
-                    
-                    if (dummy.position.y < 0) {
-                        dummy.position.y = 10 + Math.random() * 2;
-                        dummy.position.x = (Math.random() - 0.5) * 22;
+                    if (p.pos.y < 0) {
+                        p.pos.y = 10 + Math.random() * 2;
+                        p.pos.x = (Math.random() - 0.5) * 22;
                     }
                     
+                    dummy.position.set(p.pos.x, p.pos.y, p.pos.z);
+                    dummy.rotation.set(p.rot.x, p.rot.y, p.rot.z);
                     dummy.updateMatrix();
                     mesh.setMatrixAt(i, dummy.matrix);
                 }
-                mesh.instanceMatrix.needsUpdate = true;
+                mesh.instanceMatrix.needsUpdate = true; // ← この1行が必須でした
             }
             else if (currentParticleType === 'bubbles' && stageElements.particles.bubbles.mesh) {
                 const positions = stageElements.particles.bubbles.mesh.geometry.attributes.position.array;
@@ -1387,14 +1525,16 @@
             }
 
             if (screenRenderTarget && mainScreenMesh) {
-                mainScreenMesh.visible = false;
-                
-                // モニター用カメラで直接鮮明な映像をレンダーターゲットに描画
-                renderer.setRenderTarget(screenRenderTarget);
-                renderer.render(scene, screenCamera);
-                renderer.setRenderTarget(null);
-                
-                mainScreenMesh.visible = true;
+                if (monitorMode === 'live') {
+                    mainScreenMesh.visible = false;
+                    
+                    // モニター用カメラで直接鮮明な映像をレンダーターゲットに描画
+                    renderer.setRenderTarget(screenRenderTarget);
+                    renderer.render(scene, screenCamera);
+                    renderer.setRenderTarget(null);
+                    
+                    mainScreenMesh.visible = true;
+                }
             }
 
             controls.update();
